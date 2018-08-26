@@ -1,9 +1,13 @@
+import argparse
 import torch
+import os
 from torch import nn
 from torch.autograd import Variable
 from torch.nn import functional as F
 import torch.utils.data
 
+import torchvision.datasets as dataset
+import torchvision.transforms as transforms
 from torchvision.models.inception import inception_v3
 
 import numpy as np
@@ -20,7 +24,7 @@ def inception_score(imgs, cuda=True, batch_size=32, resize=False, splits=1):
     N = len(imgs)
 
     assert batch_size > 0
-    assert N > batch_size
+    assert N >= batch_size
 
     # Set up dtype
     if cuda:
@@ -35,8 +39,9 @@ def inception_score(imgs, cuda=True, batch_size=32, resize=False, splits=1):
 
     # Load inception model
     inception_model = inception_v3(pretrained=True, transform_input=False).type(dtype)
-    inception_model.eval();
+    inception_model.eval()
     up = nn.Upsample(size=(299, 299), mode='bilinear').type(dtype)
+
     def get_pred(x):
         if resize:
             x = up(x)
@@ -67,29 +72,37 @@ def inception_score(imgs, cuda=True, batch_size=32, resize=False, splits=1):
 
     return np.mean(split_scores), np.std(split_scores)
 
+
+class IgnoreLabelDataset(torch.utils.data.Dataset):
+    def __init__(self, orig):
+        self.orig = orig
+
+    def __getitem__(self, index):
+        return self.orig[index][0]
+
+    def __len__(self):
+        return len(self.orig)
+
+
 if __name__ == '__main__':
-    class IgnoreLabelDataset(torch.utils.data.Dataset):
-        def __init__(self, orig):
-            self.orig = orig
+    parser = argparse.ArgumentParser()
+    parser.add_argument("data_root", default='./data')
+    parser.add_argument('--splits', type=int)
+    parser.add_argument('--batch_size', type=int)
+    args = parser.parse_args()
 
-        def __getitem__(self, index):
-            return self.orig[index][0]
-
-        def __len__(self):
-            return len(self.orig)
-
-    import torchvision.datasets as dset
-    import torchvision.transforms as transforms
-
-    cifar = dset.CIFAR10(root='data/', download=True,
+    images = dataset.ImageFolder(root=args.data_root,
                              transform=transforms.Compose([
-                                 transforms.Scale(32),
                                  transforms.ToTensor(),
                                  transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
                              ])
     )
 
-    IgnoreLabelDataset(cifar)
-
-    print ("Calculating Inception Score...")
-    print (inception_score(IgnoreLabelDataset(cifar), cuda=True, batch_size=32, resize=True, splits=10))
+    if not args.splits:
+        args.splits = len(os.listdir(args.data_root))
+    if not args.batch_size:
+        args.batch_size = len(images) // args.splits
+    print('Batch size: {}\nSplits: {}'.format(args.batch_size, args.splits))
+    print("Calculating Inception Score...")
+    print(inception_score(IgnoreLabelDataset(images), resize=True, cuda=False,
+                          batch_size=args.batch_size, splits=args.splits))

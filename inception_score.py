@@ -40,13 +40,11 @@ def inception_score(imgs, cuda=True, batch_size=32, resize=False, splits=1):
     # Load inception model
     inception_model = inception_v3(pretrained=True, transform_input=False).type(dtype)
     inception_model.eval()
-    up = nn.Upsample(size=(299, 299), mode='bilinear').type(dtype)
 
     def get_pred(x):
-        if resize:
-            x = up(x)
         x = inception_model(x)
-        return F.softmax(x).data.cpu().numpy()
+        result = F.softmax(x, dim=1).data.cpu().numpy()
+        return result
 
     # Get predictions
     preds = np.zeros((N, 1000))
@@ -56,7 +54,8 @@ def inception_score(imgs, cuda=True, batch_size=32, resize=False, splits=1):
         batchv = Variable(batch)
         batch_size_i = batch.size()[0]
 
-        preds[i*batch_size:i*batch_size + batch_size_i] = get_pred(batchv)
+        result = get_pred(batchv)
+        preds[i*batch_size:i*batch_size + batch_size_i] = result
 
     # Now compute the mean kl-div
     split_scores = []
@@ -89,14 +88,16 @@ if __name__ == '__main__':
     parser.add_argument("data_root", default='./data')
     parser.add_argument('--splits', type=int)
     parser.add_argument('--batch_size', type=int)
+    parser.add_argument('--cuda', action='store_true')
     args = parser.parse_args()
 
-    images = dataset.ImageFolder(root=args.data_root,
-                             transform=transforms.Compose([
-                                 transforms.ToTensor(),
-                                 transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
-                             ])
-    )
+    transform = transforms.Compose([
+        transforms.Resize(299),
+        transforms.ToTensor(),
+        transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+        ])
+
+    images = dataset.ImageFolder(root=args.data_root, transform=transform)
 
     if not args.splits:
         args.splits = len(os.listdir(args.data_root))
@@ -104,5 +105,5 @@ if __name__ == '__main__':
         args.batch_size = len(images) // args.splits
     print('Batch size: {}\nSplits: {}'.format(args.batch_size, args.splits))
     print("Calculating Inception Score...")
-    print(inception_score(IgnoreLabelDataset(images), resize=True, cuda=False,
+    print(inception_score(IgnoreLabelDataset(images), resize=True, cuda=args.cuda,
                           batch_size=args.batch_size, splits=args.splits))
